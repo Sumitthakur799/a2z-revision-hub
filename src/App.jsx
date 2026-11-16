@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { motion, AnimatePresence, useMotionValue, useSpring, useTransform } from "framer-motion";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 // ════════════════════════════════════════════════════════════════════════════
 // TOPIC DATA
@@ -999,11 +999,6 @@ const modalPanelVariants = {
 };
 
 // Page/section switch — quick fade + tiny slide, never more than ~250ms
-const pageTransitionVariants = {
-  hidden: { opacity: 0, y: 8 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.22, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, y: -6, transition: { duration: 0.15, ease: "easeIn" } },
-};
 
 // Card hover — translateY(-4px) + soft glow, per spec
 const cardHoverTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] };
@@ -1640,11 +1635,25 @@ function SummaryCard({ progress, activity }) {
 // ════════════════════════════════════════════════════════════════════════════
 // HEATMAP
 // ════════════════════════════════════════════════════════════════════════════
-function GithubHeatmap({ activity }) {
+function GithubHeatmap({ activity, plan }) {
   const [tip, setTip] = useState(null);
   const cellSize = 16, gap = 3;
   const heatmap = useMemo(() => buildHeatmap(activity), [activity]);
   const monthLabels = useMemo(() => getMonthLabels(heatmap), [heatmap]);
+  const planByDate = useMemo(() => {
+    const m = {};
+    ((plan && plan.cells) || []).forEach(c => { m[c.date] = c; });
+    return m;
+  }, [plan]);
+  // outline plan days: blue = target met, red = missed, purple = today
+  const planBorder = (day) => {
+    if (day.isFuture) return "none";
+    const pc = planByDate[day.date];
+    if (pc && pc.state === "met") return "2px solid #58A6FF";
+    if (pc && pc.state === "missed") return "2px solid #F85149";
+    if (pc && pc.state === "today") return "2px solid #A78BFA";
+    return "1px solid rgba(255,255,255,0.03)";
+  };
   return (
     <div style={{ overflowX: "auto", position: "relative" }}>
       <div style={{ display: "flex", paddingLeft: 28, marginBottom: 4 }}>
@@ -1664,7 +1673,7 @@ function GithubHeatmap({ activity }) {
             <div key={wi} style={{ display: "flex", flexDirection: "column", gap }}>
               {wk.map((day, di) => (
                 <div key={di}
-                  style={{ width: cellSize, height: cellSize, borderRadius: 3, background: heatCol(day.count, day.isFuture), border: day.isFuture ? "none" : "1px solid rgba(255,255,255,0.03)", cursor: day.isFuture ? "default" : "pointer", flexShrink: 0, transition: "transform 0.1s" }}
+                  style={{ width: cellSize, height: cellSize, borderRadius: 3, background: heatCol(day.count, day.isFuture), border: planBorder(day), boxSizing: "border-box", cursor: day.isFuture ? "default" : "pointer", flexShrink: 0, transition: "transform 0.1s" }}
                   onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.3)"; if (!day.isFuture) { const r = e.currentTarget.getBoundingClientRect(); setTip({ x: r.left, y: r.top, ...day }); } }}
                   onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; setTip(null); }} />
               ))}
@@ -1677,10 +1686,19 @@ function GithubHeatmap({ activity }) {
         {[0, 2, 4, 6, 9].map(c => <div key={c} style={{ width: 16, height: 16, borderRadius: 3, background: heatCol(c, false), border: "1px solid rgba(255,255,255,0.03)" }} />)}
         <span style={{ fontSize: 11, color: "#8B949E" }}>More</span>
       </div>
+      {plan && plan.cells && plan.cells.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, justifyContent: "flex-end", fontSize: 11, color: "#8B949E", flexWrap: "wrap" }}>
+          <span>🎯 Plan days:</span>
+          <span><span style={{ color: "#58A6FF" }}>▢</span> target met</span>
+          <span><span style={{ color: "#F85149" }}>▢</span> missed</span>
+          <span><span style={{ color: "#A78BFA" }}>▢</span> today</span>
+        </div>
+      )}
       {tip && (
         <div style={{ position: "fixed", left: tip.x - 36, top: tip.y - 50, background: "#1C2128", border: "1px solid #30363D", borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#E6EDF3", pointerEvents: "none", zIndex: 999, boxShadow: "0 4px 16px rgba(0,0,0,.5)" }}>
           <div style={{ fontWeight: 600 }}>{tip.count} problem{tip.count !== 1 ? "s" : ""}</div>
           <div style={{ color: "#8B949E" }}>{tip.date}</div>
+          {planByDate[tip.date] && <div style={{ color: "#A78BFA", marginTop: 2 }}>🎯 Plan: {planByDate[tip.date].done}/{planByDate[tip.date].target}</div>}
         </div>
       )}
     </div>
@@ -1703,23 +1721,20 @@ function Dashboard({ progress, activity, settings, onSetDailyGoal, onNavigate, o
   const today = todayKey();
   const solvedToday = Object.values(progress).filter(v => v.lastSolved === today).length;
   const revisedToday = Object.values(progress).filter(v => (v.revisionHistory || []).some(r => r.done && r.doneDate === today)).length;
-  const GOAL = settings.dailyGoal;
+  const plan = computePlan(progress);
+  const GOAL = plan.active ? plan.todayTarget : settings.dailyGoal;
   const streak = computeStreak(activity);
-  const timerStats = loadTimerStats();
 
   const solvedCount = useCountUp(solved, 1000, true);
   const todayCount = useCountUp(solvedToday, 800, true);
   const revisedCount = useCountUp(revisedToday, 800, true);
   const streakCount = useCountUp(streak, 800, true);
 
-  const revQueue = ALL_PROBLEMS.filter(p => {
-    const pr = progress[p.id];
-    if (!pr || !(pr.revisionHistory || []).length) return false;
-    return pr.revisionHistory.some(r => !r.done && r.dueDate <= today);
-  });
+  const revQueue = plan.revDue; // same list the Challenge Plan uses
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="show" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <PlanDashboardCard plan={plan} onNavigate={onNavigate} />
       <PersonalRecordsCard activity={activity} />
 
       {/* ── Two-column layout ── */}
@@ -1749,11 +1764,11 @@ function Dashboard({ progress, activity, settings, onSetDailyGoal, onNavigate, o
               ))}
               <div style={{ borderTop: "1px solid #21262D", paddingTop: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, gap: 8 }}>
-                  <span style={{ fontSize: 12, color: "#8B949E" }}>Daily Goal</span>
+                  <span style={{ fontSize: 12, color: "#8B949E" }}>{plan.active ? "Plan Target" : "Daily Goal"}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button onClick={() => onSetDailyGoal(GOAL - 1)} style={{ width: 20, height: 20, borderRadius: 5, border: "1px solid #21262D", background: "#161B22", color: "#8B949E", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>−</button>
+                    <button onClick={() => onSetDailyGoal(GOAL - 1)} style={{ opacity: plan.active ? 0.3 : 1, pointerEvents: plan.active ? "none" : "auto", width: 20, height: 20, borderRadius: 5, border: "1px solid #21262D", background: "#161B22", color: "#8B949E", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>−</button>
                     <span style={{ fontSize: 12, fontFamily: "monospace", color: "#A78BFA", minWidth: 36, textAlign: "center" }}>{solvedToday} / {GOAL}</span>
-                    <button onClick={() => onSetDailyGoal(GOAL + 1)} style={{ width: 20, height: 20, borderRadius: 5, border: "1px solid #21262D", background: "#161B22", color: "#8B949E", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>+</button>
+                    <button onClick={() => onSetDailyGoal(GOAL + 1)} style={{ opacity: plan.active ? 0.3 : 1, pointerEvents: plan.active ? "none" : "auto", width: 20, height: 20, borderRadius: 5, border: "1px solid #21262D", background: "#161B22", color: "#8B949E", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>+</button>
                   </div>
                 </div>
                 <ProgressBar value={solvedToday} max={GOAL} color="#A78BFA" height={5} animate />
@@ -1772,8 +1787,6 @@ function Dashboard({ progress, activity, settings, onSetDailyGoal, onNavigate, o
           { icon: "🔥", val: streakCount, suffix: streak === 1 ? " Day Streak" : " Day Streak", color: "#F59E0B" },
           { icon: "✓", val: todayCount, suffix: " Solved Today", color: "#3FB950" },
           { icon: "✦", val: revisedCount, suffix: " Revised Today", color: "#A78BFA" },
-          { icon: "⏱", val: timerStats.sessions, suffix: " Study Sessions", color: "#6366f1" },
-          { icon: "⚡", val: timerStats.xp, suffix: " Timer XP", color: "#8b5cf6" },
         ].map(({ icon, val, suffix, color }) => (
           <Card key={suffix} style={{ flex: "1 1 140px", textAlign: "center", padding: "14px 12px" }}>
             <div style={{ fontSize: 24, fontWeight: 700, color, fontFamily: "monospace" }}>{icon} {val}</div>
@@ -1851,7 +1864,7 @@ function Dashboard({ progress, activity, settings, onSetDailyGoal, onNavigate, o
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <SectionTitle>Activity — Last 12 Months</SectionTitle>
         </div>
-        <GithubHeatmap activity={activity} />
+        <GithubHeatmap activity={activity} plan={plan} />
       </Card>
 
       {/* Backup */}
@@ -2870,416 +2883,6 @@ function ProblemDetail({ problem, progress, onBack, onUpdate, onActivity }) {
   );
 }
 // ════════════════════════════════════════════════════════════════════════════
-// SMART STUDY TIMER
-// ════════════════════════════════════════════════════════════════════════════
-const TIMER_LS = "smart_study_timer_v2";
-const TIMER_STATS_LS = "smart_study_stats_v1";
-const BREAK_MINS_CONST = 5;
-
-function buildTimerPhases(totalMins) {
-  if (totalMins <= 25) return [{ type: "focus", label: "Focus", duration: totalMins * 60, index: 1, of: 1 }];
-  const focusMins = Math.floor((totalMins - BREAK_MINS_CONST) / 2);
-  return [
-    { type: "focus", label: "Focus", duration: focusMins * 60, index: 1, of: 2 },
-    { type: "break", label: "Break", duration: BREAK_MINS_CONST * 60, index: null, of: null },
-    { type: "focus", label: "Focus", duration: focusMins * 60, index: 2, of: 2 },
-  ];
-}
-
-function fmtTime(secs) {
-  const m = Math.floor(secs / 60).toString().padStart(2, "0");
-  const s = (secs % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
-}
-
-function playFocusEndSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [[220, 0], [196, 0.6], [174, 1.2]].forEach(([freq, delay]) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      const comp = ctx.createDynamicsCompressor();
-      o.connect(g); g.connect(comp); comp.connect(ctx.destination);
-      o.type = "sine"; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, ctx.currentTime + delay);
-      g.gain.linearRampToValueAtTime(0.55, ctx.currentTime + delay + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 1.8);
-      o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 1.9);
-      const o2 = ctx.createOscillator(), g2 = ctx.createGain();
-      o2.connect(g2); g2.connect(comp);
-      o2.type = "sine"; o2.frequency.value = freq * 2;
-      g2.gain.setValueAtTime(0, ctx.currentTime + delay);
-      g2.gain.linearRampToValueAtTime(0.18, ctx.currentTime + delay + 0.02);
-      g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 1.2);
-      o2.start(ctx.currentTime + delay); o2.stop(ctx.currentTime + delay + 1.3);
-    });
-  } catch (e) {}
-}
-
-function playBreakEndSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [[523, 0], [659, 0.18], [784, 0.36], [1047, 0.54]].forEach(([freq, delay]) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = "triangle"; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, ctx.currentTime + delay);
-      g.gain.linearRampToValueAtTime(0.35, ctx.currentTime + delay + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.55);
-      o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 0.6);
-    });
-  } catch (e) {}
-}
-
-function playCompleteSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [[523, 0], [523, 0.12], [523, 0.24], [659, 0.36], [784, 0.52], [1047, 0.72]].forEach(([freq, delay]) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = "sine"; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, ctx.currentTime + delay);
-      g.gain.linearRampToValueAtTime(0.4, ctx.currentTime + delay + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + (freq > 800 ? 1.2 : 0.35));
-      o.start(ctx.currentTime + delay); o.stop(ctx.currentTime + delay + 1.3);
-    });
-  } catch (e) {}
-}
-
-function playTickSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
-    o.type = "sine"; o.frequency.value = 880;
-    g.gain.setValueAtTime(0, ctx.currentTime);
-    g.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-    o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.1);
-  } catch (e) {}
-}
-
-function loadTimerState() { try { const s = localStorage.getItem(TIMER_LS); return s ? JSON.parse(s) : null; } catch { return null; } }
-function saveTimerState(s) { try { localStorage.setItem(TIMER_LS, JSON.stringify(s)); } catch {} }
-function loadTimerStats() { try { const s = localStorage.getItem(TIMER_STATS_LS); return s ? JSON.parse(s) : { sessions: 0, xp: 0, streak: 0, lastDate: null }; } catch { return { sessions: 0, xp: 0, streak: 0, lastDate: null }; } }
-function saveTimerStats(s) { try { localStorage.setItem(TIMER_STATS_LS, JSON.stringify(s)); } catch {} }
-function addTimerSession() {
-  const st = loadTimerStats();
-  const today = new Date().toDateString();
-  const yesterday = new Date(Date.now() - 86400000).toDateString();
-  let streak = st.lastDate === today ? st.streak : st.lastDate === yesterday ? st.streak + 1 : 1;
-  const updated = { sessions: st.sessions + 1, xp: st.xp + 50, streak, lastDate: today };
-  saveTimerStats(updated); return updated;
-}
-
-function TimerRing({ progress, type, warning }) {
-  const R = 110, cx = 120, cy = 120, C = 2 * Math.PI * R;
-  const offset = C - progress * C;
-  const color = type === "break" ? "#34d399" : warning ? "#f59e0b" : "#8b5cf6";
-  const glowColor = type === "break" ? "#34d39966" : warning ? "#f59e0b66" : "#8b5cf666";
-  return (
-    <svg width="240" height="240" viewBox="0 0 240 240" style={{ filter: `drop-shadow(0 0 20px ${glowColor})` }}>
-      <circle cx={cx} cy={cy} r={R} fill="none" strokeWidth="12" stroke="rgba(255,255,255,0.06)" />
-      <circle cx={cx} cy={cy} r={R} fill="none" strokeWidth="12" stroke={color}
-        strokeDasharray={C} strokeDashoffset={offset} strokeLinecap="round"
-        transform="rotate(-90 120 120)"
-        style={{ transition: "stroke-dashoffset 0.9s cubic-bezier(0.4,0,0.2,1), stroke 0.4s" }} />
-      <circle cx={cx} cy={cy} r={R - 18} fill="none" strokeWidth="1" stroke={color} strokeOpacity="0.12" />
-    </svg>
-  );
-}
-
-function StudyTimer({ onBumpActivity }) {
-  const saved = loadTimerState();
-  const [screen,     setScreen]     = useState(saved?.screen    || "setup");
-  const [inputMins,  setInputMins]  = useState(saved?.inputMins || "45");
-  const [phases,     setPhases]     = useState(saved?.phases    || []);
-  const [phaseIdx,   setPhaseIdx]   = useState(saved?.phaseIdx  || 0);
-  // phaseEndsAt = absolute timestamp (ms) when the current phase should hit 0.
-  // This survives unmount/remount because it's a fixed point in time, not a
-  // relative countdown that silently freezes while the component is gone.
-  const [phaseEndsAt, setPhaseEndsAt] = useState(saved?.phaseEndsAt || null);
-  const [pausedRemaining, setPausedRemaining] = useState(saved?.pausedRemaining ?? null);
-  const [running,    setRunning]    = useState(saved?.running   || false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [timerStats, setTimerStats] = useState(loadTimerStats);
-  const [, forceTick] = useState(0); // re-render every 500ms while running
-
-  const phasesRef     = useRef(phases);
-  const phaseIdxRef   = useRef(phaseIdx);
-  const phaseEndsAtRef = useRef(phaseEndsAt);
-  const runningRef    = useRef(running);
-  const soundRef      = useRef(soundEnabled);
-  const tickRef       = useRef(null);
-  const prevSecsRef   = useRef(null);
-
-  useEffect(() => { phasesRef.current      = phases;       }, [phases]);
-  useEffect(() => { phaseIdxRef.current    = phaseIdx;     }, [phaseIdx]);
-  useEffect(() => { phaseEndsAtRef.current = phaseEndsAt;  }, [phaseEndsAt]);
-  useEffect(() => { runningRef.current     = running;      }, [running]);
-  useEffect(() => { soundRef.current       = soundEnabled; }, [soundEnabled]);
-  useEffect(() => {
-    saveTimerState({ screen, inputMins, phases, phaseIdx, phaseEndsAt, pausedRemaining, running });
-  }, [screen, inputMins, phases, phaseIdx, phaseEndsAt, pausedRemaining, running]);
-  useEffect(() => { setTimerStats(loadTimerStats()); }, [screen]);
-
-  // Derive remaining seconds for the CURRENT phase, always computed fresh
-  // from the absolute end timestamp — correct even after the tab was closed
-  // or the component was unmounted for any length of time.
-  const getTimeLeft = useCallback(() => {
-    if (!running) return pausedRemaining ?? 0;
-    if (!phaseEndsAtRef.current) return 0;
-    return Math.max(0, Math.round((phaseEndsAtRef.current - Date.now()) / 1000));
-  }, [running, pausedRemaining]);
-
-  const advance = useCallback(() => {
-    const currentPhases = phasesRef.current;
-    const currentIdx    = phaseIdxRef.current;
-    const nextIdx       = currentIdx + 1;
-    if (nextIdx >= currentPhases.length) {
-      setRunning(false); setScreen("done"); setPhaseEndsAt(null); setPausedRemaining(null);
-      const updated = addTimerSession(); setTimerStats(updated);
-      if (onBumpActivity) onBumpActivity();
-      if (soundRef.current) playCompleteSound(); return;
-    }
-    if (soundRef.current) {
-      if (currentPhases[currentIdx]?.type === "focus") playFocusEndSound();
-      else playBreakEndSound();
-    }
-    const nextDuration = currentPhases[nextIdx].duration;
-    phaseIdxRef.current = nextIdx; setPhaseIdx(nextIdx);
-    const endsAt = Date.now() + nextDuration * 1000;
-    phaseEndsAtRef.current = endsAt; setPhaseEndsAt(endsAt);
-    setPausedRemaining(null);
-    prevSecsRef.current = null;
-  }, [onBumpActivity]);
-
-  // Single ticking effect — runs whenever `running` flips true, reconciles
-  // immediately on mount (handles the "came back after N minutes" case),
-  // then re-checks every 500ms purely by re-deriving from the timestamp.
-  useEffect(() => {
-    if (!running) { clearInterval(tickRef.current); return; }
-    if (!phaseEndsAtRef.current) return;
-
-    function tick() {
-      const remaining = Math.max(0, Math.round((phaseEndsAtRef.current - Date.now()) / 1000));
-      forceTick(t => t + 1); // re-render so getTimeLeft() reflects new value
-      if (soundRef.current && remaining > 0 && remaining <= 10 && remaining !== prevSecsRef.current) {
-        prevSecsRef.current = remaining;
-        playTickSound();
-      }
-      if (remaining <= 0) {
-        clearInterval(tickRef.current);
-        advance();
-      }
-    }
-    tick(); // reconcile immediately — covers time elapsed while unmounted
-    tickRef.current = setInterval(tick, 500);
-    return () => clearInterval(tickRef.current);
-  }, [running, advance, phaseEndsAt]);
-
-  function startSession() {
-    const m = Math.max(1, parseInt(inputMins) || 45);
-    const p = buildTimerPhases(m);
-    const endsAt = Date.now() + p[0].duration * 1000;
-    phasesRef.current = p; phaseIdxRef.current = 0; phaseEndsAtRef.current = endsAt;
-    prevSecsRef.current = null;
-    setPhases(p); setPhaseIdx(0); setPhaseEndsAt(endsAt); setPausedRemaining(null);
-    setScreen("timer"); setRunning(true);
-  }
-
-  function togglePause() {
-    if (running) {
-      // Pausing: freeze the remaining time as a static number
-      const remaining = getTimeLeft();
-      setPausedRemaining(remaining);
-      setRunning(false);
-    } else {
-      // Resuming: convert the frozen remaining time back into an absolute end timestamp
-      const remaining = pausedRemaining ?? 0;
-      const endsAt = Date.now() + remaining * 1000;
-      phaseEndsAtRef.current = endsAt;
-      setPhaseEndsAt(endsAt);
-      setPausedRemaining(null);
-      setRunning(true);
-    }
-  }
-
-  function resetTimer() {
-    setRunning(false); clearInterval(tickRef.current);
-    setScreen("setup"); setPhases([]); setPhaseIdx(0); setPhaseEndsAt(null); setPausedRemaining(null);
-    phasesRef.current = []; phaseIdxRef.current = 0; phaseEndsAtRef.current = null;
-    saveTimerState(null);
-  }
-
-  const timeLeft = getTimeLeft();
-  const curPhase    = phases[phaseIdx];
-  const totalDur    = curPhase?.duration || 1;
-  const ringProgress = curPhase ? (totalDur - timeLeft) / totalDur : 0;
-  const mins        = parseInt(inputMins) || 0;
-  const focusMins   = mins > 25 ? Math.floor((mins - BREAK_MINS_CONST) / 2) : mins;
-  const isWarning   = timeLeft <= 10 && timeLeft > 0 && screen === "timer";
-  const accentColor  = curPhase?.type === "break" ? "#34d399" : isWarning ? "#f59e0b" : "#8b5cf6";
-  const accentBg     = curPhase?.type === "break" ? "rgba(52,211,153,0.1)"  : isWarning ? "rgba(245,158,11,0.1)"  : "rgba(139,92,246,0.1)";
-  const accentBorder = curPhase?.type === "break" ? "rgba(52,211,153,0.3)"  : isWarning ? "rgba(245,158,11,0.3)"  : "rgba(139,92,246,0.25)";
-
-  return (
-    <motion.div variants={fadeSlideUp} initial="hidden" animate="show"
-      style={{ maxWidth: 520, margin: "0 auto", padding: "8px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#E6EDF3", letterSpacing: "-0.01em" }}>Study Timer</div>
-          <div style={{ fontSize: 12, color: "#8B949E", marginTop: 2 }}>Smart focus sessions · synced with tracker</div>
-        </div>
-        {screen === "timer" && (
-          <button onClick={() => setSoundEnabled(s => !s)}
-            style={{ background: soundEnabled ? "rgba(139,92,246,0.15)" : "rgba(255,255,255,0.05)", border: `1px solid ${soundEnabled ? "rgba(139,92,246,0.4)" : "rgba(255,255,255,0.1)"}`, borderRadius: 10, color: soundEnabled ? "#c4b5fd" : "#484F58", cursor: "pointer", fontSize: 18, padding: "8px 12px" }}>
-            {soundEnabled ? "🔔" : "🔕"}
-          </button>
-        )}
-      </div>
-
-      <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-        {[["🎯", "Sessions", timerStats.sessions], ["⚡", "XP Earned", timerStats.xp], ["🔥", "Streak", timerStats.streak]].map(([icon, lbl, val]) => (
-          <div key={lbl} style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
-            <div style={{ fontSize: 16, marginBottom: 4 }}>{icon}</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: "#E6EDF3", fontFamily: "monospace" }}>{val}</div>
-            <div style={{ fontSize: 10, color: "#8B949E", marginTop: 3, textTransform: "uppercase", letterSpacing: "0.06em" }}>{lbl}</div>
-          </div>
-        ))}
-      </div>
-
-      {screen === "setup" && (
-        <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 28, display: "flex", flexDirection: "column", gap: 18 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Session Duration</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <input type="number" min="5" max="180" value={inputMins} onChange={e => setInputMins(e.target.value)}
-                style={{ flex: 1, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, color: "#E6EDF3", fontSize: 28, fontWeight: 700, fontFamily: "monospace", padding: "12px 16px", outline: "none", textAlign: "center" }} />
-              <span style={{ color: "#8B949E", fontSize: 14, fontWeight: 500 }}>min</span>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {[25, 45, 60, 90].map(m => (
-              <button key={m} onClick={() => setInputMins(String(m))}
-                style={{ flex: 1, background: inputMins === String(m) ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.05)", border: `1px solid ${inputMins === String(m) ? "rgba(139,92,246,0.5)" : "rgba(255,255,255,0.1)"}`, borderRadius: 10, color: inputMins === String(m) ? "#c4b5fd" : "#8B949E", cursor: "pointer", fontSize: 13, fontWeight: 600, padding: "8px 4px" }}>
-                {m}m
-              </button>
-            ))}
-          </div>
-          {mins > 25 && (
-            <div style={{ background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 12, padding: "14px 16px" }}>
-              <div style={{ fontSize: 11, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Session plan</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ background: "rgba(139,92,246,0.2)", border: "1px solid rgba(139,92,246,0.4)", borderRadius: 8, color: "#c4b5fd", fontSize: 12, fontWeight: 700, padding: "5px 12px" }}>⚡ {focusMins} min focus</div>
-                <div style={{ color: "#484F58", fontSize: 14 }}>→</div>
-                <div style={{ background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.35)", borderRadius: 8, color: "#6ee7b7", fontSize: 12, fontWeight: 700, padding: "5px 12px" }}>☕ 5 min break</div>
-                <div style={{ color: "#484F58", fontSize: 14 }}>→</div>
-                <div style={{ background: "rgba(139,92,246,0.2)", border: "1px solid rgba(139,92,246,0.4)", borderRadius: 8, color: "#c4b5fd", fontSize: 12, fontWeight: 700, padding: "5px 12px" }}>⚡ {focusMins} min focus</div>
-              </div>
-            </div>
-          )}
-          {mins > 0 && mins <= 25 && (
-            <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 12, padding: "12px 16px", color: "#a5b4fc", fontSize: 13 }}>
-              ⚡ Single focus session — {mins} minutes
-            </div>
-          )}
-          <button onClick={startSession} disabled={mins < 1}
-            style={{ background: "linear-gradient(135deg,#8b5cf6,#6366f1)", border: "none", borderRadius: 14, color: "#fff", cursor: mins < 1 ? "not-allowed" : "pointer", fontSize: 16, fontWeight: 700, padding: "14px", width: "100%", opacity: mins < 1 ? 0.5 : 1 }}>
-            Start Session
-          </button>
-        </div>
-      )}
-
-      {screen === "timer" && curPhase && (
-        <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${accentBorder}`, borderRadius: 20, padding: "28px 24px", transition: "border-color 0.5s" }}>
-          <div style={{ textAlign: "center", marginBottom: 8 }}>
-            <motion.div key={phaseIdx} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: accentBg, border: `1px solid ${accentBorder}`, borderRadius: 20, padding: "6px 16px", marginBottom: 6 }}>
-                <span style={{ fontSize: 14 }}>{curPhase.type === "break" ? "☕" : "⚡"}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: accentColor, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  {curPhase.type === "focus" ? `Focus ${curPhase.index} of ${curPhase.of}` : "Break Time"}
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: "#8B949E", letterSpacing: "0.04em" }}>
-                {curPhase.type === "focus" ? "Stay in the zone. No distractions." : "Step away · Breathe · Hydrate"}
-              </div>
-            </motion.div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "center", position: "relative", marginBottom: 8 }}>
-            <TimerRing progress={ringProgress} type={curPhase.type} warning={isWarning} />
-            <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", width: "100%" }}>
-              <div style={{ color: isWarning ? "#fbbf24" : "#E6EDF3", fontSize: 52, fontWeight: 700, letterSpacing: "-0.04em", fontFamily: "monospace", lineHeight: 1, transition: "color 0.3s" }}>
-                {fmtTime(timeLeft)}
-              </div>
-              <div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <div style={{ width: 6, height: 6, borderRadius: "50%", background: running ? accentColor : "#484F58", boxShadow: running ? `0 0 8px ${accentColor}` : "none", transition: "all 0.3s" }} />
-                <span style={{ color: "#8B949E", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>{running ? "running" : "paused"}</span>
-              </div>
-            </div>
-          </div>
-          {isWarning && (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
-              style={{ background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 10, color: "#fbbf24", fontSize: 12, fontWeight: 600, padding: "8px 14px", textAlign: "center", marginBottom: 16 }}>
-              ⏰ {timeLeft} second{timeLeft !== 1 ? "s" : ""} remaining
-            </motion.div>
-          )}
-          <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 22, flexWrap: "wrap" }}>
-            {phases.map((p, i) => {
-              const st = i < phaseIdx ? "done" : i === phaseIdx ? "active" : "upcoming";
-              const bg = st === "done" ? "rgba(52,211,153,0.12)" : st === "active" ? accentBg : "rgba(255,255,255,0.04)";
-              const bc = st === "done" ? "rgba(52,211,153,0.35)" : st === "active" ? accentBorder : "rgba(255,255,255,0.08)";
-              const tc = st === "done" ? "#6ee7b7" : st === "active" ? accentColor : "#484F58";
-              const icon = p.type === "break" ? "☕" : "⚡";
-              const lbl  = p.type === "break" ? "Break" : `Focus ${p.index}/${p.of}`;
-              return (
-                <div key={i} style={{ background: bg, border: `1px solid ${bc}`, borderRadius: 10, color: tc, fontSize: 11, fontWeight: 700, padding: "6px 14px", display: "flex", alignItems: "center", gap: 5, textTransform: "uppercase", letterSpacing: "0.05em", transition: "all 0.3s" }}>
-                  {st === "done" && <span style={{ fontSize: 10 }}>✓</span>}
-                  <span>{icon} {lbl}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={togglePause}
-              style={{ flex: 1, background: running ? "rgba(255,255,255,0.07)" : `linear-gradient(135deg,${accentColor === "#34d399" ? "#34d399,#059669" : accentColor === "#f59e0b" ? "#f59e0b,#d97706" : "#8b5cf6,#6366f1"})`, border: running ? "1px solid rgba(255,255,255,0.15)" : "none", borderRadius: 12, color: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 700, padding: "13px", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <span style={{ fontSize: 16 }}>{running ? "⏸" : "▶"}</span>
-              {running ? "Pause" : "Resume"}
-            </button>
-            <button onClick={resetTimer}
-              style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 12, color: "#fca5a5", cursor: "pointer", fontSize: 14, fontWeight: 600, padding: "13px 20px" }}>
-              ↺
-            </button>
-          </div>
-        </div>
-      )}
-
-      {screen === "done" && (
-        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }}
-          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 20, padding: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 64, marginBottom: 12 }}>🎉</div>
-          <div style={{ color: "#E6EDF3", fontSize: 22, fontWeight: 700, marginBottom: 6 }}>Session Complete!</div>
-          <div style={{ color: "#8B949E", fontSize: 14, marginBottom: 24 }}>You crushed it. Activity logged to your tracker.</div>
-          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 28 }}>
-            {[["#34d399","rgba(52,211,153,0.12)","rgba(52,211,153,0.3)","+50","XP Earned"],
-              ["#a78bfa","rgba(139,92,246,0.12)","rgba(139,92,246,0.3)",timerStats.sessions,"Total Sessions"],
-              ["#fbbf24","rgba(245,158,11,0.12)","rgba(245,158,11,0.3)",`${timerStats.streak}🔥`,"Day Streak"]].map(([color,bg,border,val,lbl]) => (
-              <div key={lbl} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: "10px 20px" }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color, fontFamily: "monospace" }}>{val}</div>
-                <div style={{ fontSize: 10, color: "#8B949E", textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 2 }}>{lbl}</div>
-              </div>
-            ))}
-          </div>
-          <button onClick={resetTimer}
-            style={{ background: "linear-gradient(135deg,#8b5cf6,#6366f1)", border: "none", borderRadius: 14, color: "#fff", cursor: "pointer", fontSize: 15, fontWeight: 700, padding: "14px 32px", width: "100%" }}>
-            Start Another Session
-          </button>
-        </motion.div>
-      )}
-    </motion.div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // DAILY STUDY PLANNER
 // ════════════════════════════════════════════════════════════════════════════
 const PLANNER_KEY = "dsa_daily_planner_v1";
@@ -3445,6 +3048,232 @@ function DailyPlanner() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// CHALLENGE PLAN  (2 problems on weekdays, 3 on weekends — missed ones carry over)
+// ════════════════════════════════════════════════════════════════════════════
+const PLAN_START = "2026-11-17";
+const PLAN_END = "2027-03-10";
+const PLAN_WEEKDAY_TARGET = 2;
+const PLAN_WEEKEND_TARGET = 3;
+
+const planNextDay = (s) => {
+  const d = new Date(s + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+const planTargetFor = (s) => {
+  const dow = new Date(s + "T00:00:00Z").getUTCDay(); // 0 = Sun, 6 = Sat
+  return dow === 0 || dow === 6 ? PLAN_WEEKEND_TARGET : PLAN_WEEKDAY_TARGET;
+};
+const planLabel = (s) =>
+  new Date(s + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+
+const PLAN_DAYS = (() => {
+  const out = [];
+  for (let d = PLAN_START; d <= PLAN_END; d = planNextDay(d)) out.push({ date: d, target: planTargetFor(d) });
+  return out;
+})();
+const PLAN_TOTAL = PLAN_DAYS.reduce((sum, d) => sum + d.target, 0);
+
+// Where the plan starts picking problems from. Everything from this step onward
+// comes first (in sheet order); the earlier steps (e.g. Sorting) go to the end.
+const PLAN_FIRST_STEP = "step3"; // Step 3: Arrays
+const PLAN_ORDER = (() => {
+  const i = ALL_PROBLEMS.findIndex(p => p.stepId === PLAN_FIRST_STEP);
+  return i <= 0 ? ALL_PROBLEMS : [...ALL_PROBLEMS.slice(i), ...ALL_PROBLEMS.slice(0, i)];
+})();
+
+// One function that the Dashboard (card, heatmap, revisions), the topbar and the
+// plan page all read from, so the numbers can never disagree with each other.
+const computePlan = (progress, today = todayKey()) => {
+  const isDone = (id) => ["Solved", "Revised"].includes(progress[id]?.status);
+
+  // problems solved per calendar date (uses the lastSolved date your tracker already saves)
+  const solvedByDate = {};
+  Object.values(progress).forEach(pr => {
+    if (pr.lastSolved && ["Solved", "Revised"].includes(pr.status)) {
+      solvedByDate[pr.lastSolved] = (solvedByDate[pr.lastSolved] || 0) + 1;
+    }
+  });
+
+  const notStarted = today < PLAN_START;
+  const finished = today > PLAN_END;
+  const active = !notStarted && !finished;
+
+  let solvedInPlan = 0, expectedBeforeToday = 0;
+  const cells = PLAN_DAYS.map(d => {
+    const done = solvedByDate[d.date] || 0;
+    solvedInPlan += done;
+    if (d.date < today) expectedBeforeToday += d.target;
+    return { ...d, done };
+  });
+
+  const todayCell = cells.find(c => c.date === today) || null;
+  const todayDone = todayCell ? todayCell.done : 0;
+
+  // CARRY-OVER: whatever you owed before today gets added to today's target
+  const pastSolved = solvedInPlan - todayDone;
+  const rawGap = pastSolved - expectedBeforeToday;     // >0 ahead, <0 behind
+  const backlog = Math.max(0, -rawGap);
+  const aheadBy = Math.max(0, rawGap);
+  const baseTarget = todayCell ? todayCell.target : 0;
+  const todayTarget = baseTarget + backlog;
+  const remainingToday = active ? Math.max(0, todayTarget - todayDone) : 0;
+
+  // state per day — the Dashboard heatmap uses this to outline plan days
+  cells.forEach(c => {
+    if (c.date > today) c.state = "future";
+    else if (c.date === today) c.state = c.done >= c.target ? "met" : "today";
+    else c.state = c.done >= c.target ? "met" : "missed";
+  });
+
+  // next unsolved problems in sheet order
+  const suggestions = remainingToday > 0
+    ? PLAN_ORDER.filter(p => !isDone(p.id)).slice(0, remainingToday)
+    : [];
+
+  // revisions due — the Dashboard's Revision Due Today section reads this
+  const revDue = ALL_PROBLEMS.filter(p =>
+    (progress[p.id]?.revisionHistory || []).some(r => !r.done && r.dueDate <= today)
+  );
+
+  const daysLeft = cells.filter(c => c.date >= today).length;
+
+  return {
+    cells, todayCell, active, notStarted, finished,
+    baseTarget, backlog, aheadBy, todayTarget, todayDone, remainingToday,
+    solvedInPlan, daysLeft, suggestions, revDue,
+  };
+};
+
+// Small card shown at the top of the Dashboard
+function PlanDashboardCard({ plan, onNavigate }) {
+  const paceText = plan.backlog > 0 ? `Behind by ${plan.backlog}` : plan.aheadBy > 0 ? `Ahead by ${plan.aheadBy}` : "On track";
+  const paceColor = plan.backlog > 0 ? "#F85149" : plan.aheadBy > 0 ? "#3FB950" : "#A78BFA";
+
+  return (
+    <Card style={{ border: "1px solid rgba(167,139,250,0.25)", background: "rgba(167,139,250,0.04)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+        <SectionTitle>🎯 Challenge Plan</SectionTitle>
+        <button onClick={() => onNavigate("plan")} style={{ fontSize: 12, color: "#A78BFA", background: "none", border: "none", cursor: "pointer" }}>Open Plan →</button>
+      </div>
+
+      {plan.notStarted && <p style={{ fontSize: 13, color: "#C9D1D9", margin: 0 }}>Starts on <b>{planLabel(PLAN_START)}</b> — {PLAN_WEEKDAY_TARGET}/day on weekdays, {PLAN_WEEKEND_TARGET}/day on weekends.</p>}
+      {plan.finished && <p style={{ fontSize: 13, color: "#C9D1D9", margin: 0 }}>Plan finished — you solved <b>{plan.solvedInPlan}</b> of {PLAN_TOTAL} planned problems. 🎉</p>}
+
+      {plan.active && (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 13, color: "#C9D1D9" }}>
+              Today's target
+              {plan.backlog > 0 && <span style={{ color: "#F59E0B" }}> · includes {plan.backlog} carried over</span>}
+            </span>
+            <span style={{ fontSize: 13, fontFamily: "monospace", color: "#A78BFA" }}>{plan.todayDone} / {plan.todayTarget}</span>
+          </div>
+          <ProgressBar value={plan.todayDone} max={plan.todayTarget} color={plan.remainingToday === 0 ? "#3FB950" : "#A78BFA"} height={6} animate />
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+            {[
+              { label: "Pace", val: paceText, color: paceColor },
+              { label: "Plan solved", val: `${plan.solvedInPlan}/${PLAN_TOTAL}`, color: "#3FB950" },
+              { label: "Days left", val: plan.daysLeft, color: "#58A6FF" },
+            ].map(s => (
+              <div key={s.label} style={{ flex: "1 1 100px", textAlign: "center", padding: "8px 6px", background: "#161B22", borderRadius: 8, border: "1px solid #21262D" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.val}</div>
+                <div style={{ fontSize: 10, color: "#8B949E", marginTop: 3, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// The plan page itself is only about the daily target. Streak, heatmap and
+// revisions live on the Dashboard and read from computePlan().
+function ChallengePlan({ progress, onSelectProblem, onNavigate }) {
+  const today = todayKey();
+  const plan = useMemo(() => computePlan(progress, today), [progress, today]);
+  const solvedTotal = ALL_PROBLEMS.filter(p => ["Solved", "Revised"].includes(progress[p.id]?.status)).length;
+
+  const statusText = plan.notStarted ? "Not started" : plan.finished ? "Finished" : plan.backlog > 0 ? `Behind by ${plan.backlog}` : plan.aheadBy > 0 ? `Ahead by ${plan.aheadBy}` : "On track";
+  const statusColor = plan.notStarted || plan.finished ? "#8B949E" : plan.backlog > 0 ? "#F85149" : plan.aheadBy > 0 ? "#3FB950" : "#A78BFA";
+
+  return (
+    <motion.div variants={staggerContainer} initial="hidden" animate="show" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <h2 style={{ fontSize: 18, fontWeight: 700, color: "#E6EDF3", marginBottom: 4 }}>🎯 Challenge Plan</h2>
+        <p style={{ fontSize: 13, color: "#8B949E" }}>
+          {planLabel(PLAN_START)} → {planLabel(PLAN_END)} · {PLAN_WEEKDAY_TARGET}/day on weekdays, {PLAN_WEEKEND_TARGET}/day on weekends · {PLAN_TOTAL} problems total
+        </p>
+      </div>
+
+      {/* Today */}
+      <Card>
+        <SectionTitle>Today</SectionTitle>
+        {plan.notStarted && <p style={{ fontSize: 13, color: "#C9D1D9", margin: 0 }}>Your plan starts on <b>{planLabel(PLAN_START)}</b>. Get ready! 💪</p>}
+        {plan.finished && <p style={{ fontSize: 13, color: "#C9D1D9", margin: 0 }}>The plan has finished. You solved <b>{plan.solvedInPlan}</b> of {PLAN_TOTAL} planned problems. 🎉</p>}
+
+        {plan.active && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 13, color: "#C9D1D9" }}>{planLabel(today)} · normal target {plan.baseTarget}</span>
+              <span style={{ fontSize: 13, fontFamily: "monospace", color: "#A78BFA" }}>{plan.todayDone} / {plan.todayTarget}</span>
+            </div>
+            <ProgressBar value={plan.todayDone} max={plan.todayTarget} color={plan.remainingToday === 0 ? "#3FB950" : "#A78BFA"} height={6} animate />
+
+            {plan.backlog > 0 && (
+              <div style={{ marginTop: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#F59E0B" }}>
+                ⚠ {plan.backlog} problem{plan.backlog === 1 ? "" : "s"} carried over from earlier days — already added to today's target.
+              </div>
+            )}
+
+            {plan.suggestions.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 14 }}>
+                <div style={{ fontSize: 12, color: "#8B949E" }}>Up next from your sheet:</div>
+                {plan.suggestions.map(p => (
+                  <div key={p.id} onClick={() => onSelectProblem(p)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#161B22", borderRadius: 8, border: "1px solid #21262D", cursor: "pointer" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: "#C9D1D9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: "#8B949E", marginTop: 2 }}>{p.subtopicTitle}</div>
+                    </div>
+                    <DiffBadge d={p.difficulty} />
+                    <LinkPills p={p} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: "#3FB950", marginTop: 12, marginBottom: 0 }}>✓ Today's target is done. Anything extra is a bonus and reduces future carry-over!</p>
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* Stats strip */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {[
+          { val: `${plan.solvedInPlan}/${PLAN_TOTAL}`, label: "Solved in plan", color: "#3FB950" },
+          { val: statusText, label: "Pace", color: statusColor },
+          { val: solvedTotal, label: "Total solved", color: "#58A6FF" },
+          { val: plan.daysLeft, label: "Days left", color: "#58A6FF" },
+        ].map(s => (
+          <Card key={s.label} style={{ flex: "1 1 120px", textAlign: "center", padding: "14px 12px" }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: "monospace" }}>{s.val}</div>
+            <div style={{ fontSize: 11, color: "#8B949E", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 12, color: "#8B949E", textAlign: "center" }}>
+        Your streak, activity heatmap and revisions due are on the{" "}
+        <button onClick={() => onNavigate("dashboard")} style={{ color: "#A78BFA", background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: 0 }}>Dashboard →</button>
+      </div>
+    </motion.div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // NAV
 // ════════════════════════════════════════════════════════════════════════════
 const NAV = [
@@ -3452,8 +3281,8 @@ const NAV = [
   { id: "roadmap",   label: "A2Z Roadmap",   icon: "◈" },
   { id: "problems",  label: "Problems",       icon: "≡" },
   { id: "practice",  label: "🎲 Practice",   icon: "" },
-  { id: "timer",     label: "⏱ Study Timer", icon: "" },
   { id: "planner",   label: "📅 Daily Planner", icon: "" },
+  { id: "plan",      label: "🎯 Challenge Plan", icon: "" },
 ];
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -3501,6 +3330,7 @@ export default function App() {
 
   const solved = ALL_PROBLEMS.filter(p => ["Solved", "Revised"].includes(progress[p.id]?.status)).length;
   const total = ALL_PROBLEMS.length;
+  const plan = useMemo(() => computePlan(progress), [progress]);
   const activePage = selected ? null : page;
 
   const initials = profile.name ? profile.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2) : "?";
@@ -3647,6 +3477,15 @@ export default function App() {
           <span style={{ fontSize: 14, fontWeight: 600, color: "#E6EDF3", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {selected ? selected.name : NAV.find(n => n.id === page)?.label}
           </span>
+          {plan.active && (
+            <button onClick={() => navigate("plan")} title="Today's Challenge Plan"
+              style={{ padding: "4px 10px", borderRadius: 8, fontSize: 12, fontWeight: 700, fontFamily: "monospace", cursor: "pointer", flexShrink: 0,
+                border: `1px solid ${plan.remainingToday === 0 ? "#3FB95050" : "#A78BFA50"}`,
+                background: plan.remainingToday === 0 ? "rgba(63,185,80,.12)" : "rgba(167,139,250,.12)",
+                color: plan.remainingToday === 0 ? "#3FB950" : "#A78BFA" }}>
+              🎯 {plan.todayDone}/{plan.todayTarget}
+            </button>
+          )}
           {/* Profile button in topbar */}
           <button onClick={() => setProfileOpen(true)}
             style={{ width: 32, height: 32, borderRadius: 8, background: `${profile.avatarColor}18`, border: `1px solid ${profile.avatarColor}40`, color: "#E6EDF3", fontSize: 11, fontWeight: 800, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -3666,8 +3505,8 @@ export default function App() {
               : page === "roadmap" ? <Roadmap progress={progress} onSelectProblem={p => setSelected(p)} />
                 : page === "problems" ? <ProblemList progress={progress} onSelect={p => setSelected(p)} />
                   : page === "practice" ? <PracticeMode progress={progress} practice={practice} setPractice={setPractice} onSelectProblem={p => setSelected(p)} />
-                    : page === "timer" ? <StudyTimer onBumpActivity={() => bumpActivityState(todayKey())} />
                     : page === "planner" ? <DailyPlanner />
+                    : page === "plan" ? <ChallengePlan progress={progress} onSelectProblem={p => setSelected(p)} onNavigate={navigate} />
                     : null
           }
         </main>
