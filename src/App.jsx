@@ -687,7 +687,39 @@ const getDailyQuote = () => {
 // STORAGE HELPERS
 // ════════════════════════════════════════════════════════════════════════════
 const LS = "dsa_v1";
-const load = () => { try { return JSON.parse(localStorage.getItem(LS)) || {}; } catch { return {}; } };
+// One-time import of notes from the Sep 2026 backup. Only fills problems whose
+// note is still empty, and never touches status, revisions or activity.
+const NOTES_SEED_LS = "dsa_notes_seed_v1";
+const NOTES_SEED = {
+  31: "First, find the size of the array",
+  38: "optimal approach by comparing the arr[i] == largest.",
+  41: "error in return value type",
+  42: "store arr[0] in a temp variable and traverse the array and use arr[i-1] = arr[i],\nafter traversing arr[n-1] = temp.",
+  43: "use reverse function fot optimal approach",
+  44: "FOR BRUTE FORCE: first store the non-zero element in the temp variable, then copy the non-zero to the original array (arr=temp), then add zero in the last, then print the array\n\nFOR OPTIMAL: initialize j = -1, then loop from 1 to n, then check if arr == 0. If 0, then do j = i and break the loop again. If j != -1, loop from j + 1 to n, then check if arr != 0, then swap and print the result",
+  45: "traverse the loop on the array, then compare arr == num; if found, return true, else false",
+  46: "FOR UNION (BRUTE FORCE): Create an empty set and insert both arrays in the set, then create an empty vector, and then insert all elements of the set in the vector. \n\nFOR INTERSECTION (BRUTE FORCE): Create an empty array for ans and one for the visited array of size arr2, then run two nested loop and compare arr1[i]==arr2[j]  and visited arr = 0, then add it into ans and mark visited arr = 1 and break, then print the ans",
+  47: "BRUTE FORCE: inner loop from 1 to n and initialize flag = 0 and outer loop from 0 to n-1, then compare arr[j] = i, then put flag = 1 and break the loop. After ending the outer loop, check if (flag == 0) return i\n\nBETTER SOLUTION: Initialize size = size()+1, then create a hash array of size n+1, 0, then loop from 0 to n-1, do hash[arr]=1, then loop from 1 to n, check if hash==0. return i at the end return -1 \n\nOPTIMAL: use the sum formula, then the for loop from arr, then sum-int_sum",
+  48: "Initialize count = 0 and maxi = 0. Traverse the array and check if arr[i] == 1. Count++ and maxi = max(count, maxi), and else count = 0, then return the maxi",
+  49: "BETTER SOL: first find the maximum in an array, then create a hash of max+1 with 0 elements and traverse the loop and mark in the hash, then if hash[arr]==1, return arr[i]\n\nOPTIMAL = use xor ",
+  50: "BRUTE FORCE APPROACH:\n\nInitialize:\narr = given array.\nk = required sum.\nlength = 0 // stores maximum subarray length.\nn = arr.size() // stores size of array.\nMain Processing:\nFor each starting index i from 0 to n-1:\na. sum = 0 // stores sum of current subarray.\nb. For each ending index j from i to n-1:\ni. Add arr[j] to sum.\nii. If (sum == k):\nCalculate current length as (j - i) + 1.\nUpdate length = max(length, current length).\niii. Continue checking the remaining elements.\n\nhttps://www.underratedcoder.com/compiler/wupp44j3t\n\n\n\n\n\n\n\nBETTER APPROACH =\n1. Initialize:\n- prefixSum = 0\n- maxLen = 0\n- map = {}  // stores {prefix_sum: first_occurrence_index}\n\n2. For each element arr[i] from i = 0 to n-1:\na. prefixSum += arr[i]\n   \nb. If prefixSum == k:\nmaxLen = i + 1   // subarray from 0 to i has sum k\n   \nc. If (prefixSum - k) exists in the map:\nsubarrayLen = i - map[prefix Sum [k]\nmaxLen = max(maxLen, subarrayLen)\n   \nd. If prefixSum is NOT in the map:\nmap[prefixSum] = i // store FIRST occurrence only",
+  51: "BRUTE FORCE APPROACH:\n\nInitialize:\narr = given array.\nk = required sum.\nlength = 0 // stores maximum subarray length.\nn = arr.size() // stores size of array.\nMain Processing:\nFor each starting index i from 0 to n-1:\na. sum = 0 // stores sum of current subarray.\nb. For each ending index j from i to n-1:\ni. Add arr[j] to sum.\nii. If (sum == k):\nCalculate current length as (j - i) + 1.\nUpdate length = max(length, current length).\niii. Continue checking the remaining elements.\n\nhttps://www.underratedcoder.com/compiler/wupp44j3t\n\n\n\n\n\n\n\nOPTIMAL APPROACH =\n1. Initialize:\n- prefixSum = 0\n- maxLen = 0\n- map = {}  // stores {prefix_sum: first_occurrence_index}\n\n2. For each element arr[i] from i = 0 to n-1:\na. prefixSum += arr[i]\n   \nb. If prefixSum == k:\nmaxLen = i + 1   // subarray from 0 to i has sum k\n   \nc. If (prefixSum - k) exists in the map:\nsubarrayLen = i - map[prefix Sum [k]\nmaxLen = max(maxLen, subarrayLen)\n   \nd. If prefixSum is NOT in the map:\nmap[prefixSum] = i // store FIRST occurrence only",
+  52: "BRUTE FORCE APPROACH = initialize a function vector 2 sum, then inner loop run from 0 to n and outer loop run from i+1 to n and check if arr[i]+arr[j] == target, return {i,}}\nUse this code in the int main function: vector<int> ans = two_sum();\nif (!ans.empty())\ncout << ans[0] << \" \" << ans[1];\nelse\ncout << \"No solution found\";\n}\n"
+};
+const applyNotesSeed = (data) => {
+  try {
+    if (localStorage.getItem(NOTES_SEED_LS)) return data;
+    const merged = { ...data };
+    Object.entries(NOTES_SEED).forEach(([id, note]) => {
+      const cur = merged[id] || {};
+      if (!(cur.notes || "").trim()) merged[id] = { ...cur, notes: note };
+    });
+    localStorage.setItem(LS, JSON.stringify(merged));
+    localStorage.setItem(NOTES_SEED_LS, "1");
+    return merged;
+  } catch { return data; }
+};
+const load = () => { try { return applyNotesSeed(JSON.parse(localStorage.getItem(LS)) || {}); } catch { return {}; } };
 const save = (d) => { try { localStorage.setItem(LS, JSON.stringify(d)); } catch {} };
 
 const ACTIVITY_LS = "dsa_activity_v1";
